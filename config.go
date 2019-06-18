@@ -106,8 +106,10 @@ func (c *DatabaseConfig) Validate() error {
 	if err != nil {
 		return err
 	}
-
-	err = c.assertParamSet("sql_mode", "'STRICT_ALL_TABLES,NO_BACKSLASH_ESCAPES'")
+	// NO_BACKSLASH_ESCAPES should not be used, for example in
+	// create table with
+	// binary(16) NOT NULL DEFAULT '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
+	err = c.assertParamSet("sql_mode", "'STRICT_ALL_TABLES'")
 	if err != nil {
 		return err
 	}
