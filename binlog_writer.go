@@ -77,8 +77,11 @@ func (b *BinlogWriter) BufferBinlogEvents(events []DMLEvent) error {
 
 func (b *BinlogWriter) writeEvents(events []DMLEvent) error {
 	WaitForThrottle(b.Throttler)
-
-	queryBuffer := []byte("BEGIN;\n")
+	tx, err := b.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
 	for _, ev := range events {
 		eventDatabaseName := ev.Database()
@@ -91,23 +94,25 @@ func (b *BinlogWriter) writeEvents(events []DMLEvent) error {
 			eventTableName = targetTableName
 		}
 
-		sql, err := ev.AsSQLString(&schema.Table{Schema: eventDatabaseName, Name: eventTableName})
+		sql, args, err := ev.BuildDMLQuery(&schema.Table{Schema: eventDatabaseName, Name: eventTableName})
 		if err != nil {
 			return fmt.Errorf("generating sql query at pos %v: %v", ev.BinlogPosition(), err)
 		}
 
-		queryBuffer = append(queryBuffer, sql...)
-		queryBuffer = append(queryBuffer, ";\n"...)
-	}
+		// DEBUG:(everpcpc)
+		fmt.Println("======", sql, "======", args)
 
-	queryBuffer = append(queryBuffer, "COMMIT"...)
+		_, err = tx.Exec(sql, args...)
+		if err != nil {
+			return fmt.Errorf("exec query at pos %v : %v", ev.BinlogPosition(), err)
+		}
+	}
 
 	startEv := events[0]
 	endEv := events[len(events)-1]
-	query := string(queryBuffer)
-	_, err := b.DB.Exec(query)
-	if err != nil {
-		return fmt.Errorf("exec query at pos %v -> %v (%d bytes): %v", startEv.BinlogPosition(), endEv.BinlogPosition(), len(query), err)
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit query at pos %v -> %v (%d events): %v", startEv.BinlogPosition(), endEv.BinlogPosition(), len(events), err)
 	}
 
 	if b.StateTracker != nil {
